@@ -116,6 +116,9 @@ class Sampler(nn.Module):
         # Preprocess logits (custom processors and NaN handling)
         logits = self._preprocess_logits(logits, sampling_info)
 
+        # Apply DRY / XTC samplers
+        _apply_dry_xtc(logits, sampling_info)
+
         if sampling_info.is_all_greedy:
             if _use_aiter and not _disable_aiter_greedy_sample:
                 batch_next_token_ids = torch.empty(
@@ -766,3 +769,76 @@ def apply_custom_logit_processor(
         logger.debug(
             f"Custom logit processor {processor.__class__.__name__} is applied."
         )
+
+
+def _apply_dry_xtc(
+    logits: torch.Tensor,
+    sampling_info: "SamplingBatchInfo",
+) -> None:
+    """Apply DRY and XTC samplers in-place on logits.
+
+    DRY (Don't Repeat Yourself): penalizes tokens that would extend
+    repeated n-gram sequences in the generated output.
+
+    XTC (eXclude Top Choices): probabilistically removes top tokens
+    to force less obvious continuations.
+    """
+    import random
+
+    if not hasattr(sampling_info, "reqs") or not sampling_info.reqs:
+        return
+
+    for i, req in enumerate(sampling_info.reqs):
+        if i >= logits.shape[0]:
+            break
+        sp = req.sampling_params
+
+        # DRY — scan context for repeated sequences
+        dry_mult = getattr(sp, "dry_multiplier", 0.0)
+        if dry_mult > 0:
+            tokens = list(getattr(req, "origin_input_ids", [])) + list(
+                getattr(req, "output_ids", [])
+            )
+            if len(tokens) >= 2:
+                vocab_size = logits.shape[-1]
+                penalties = torch.zeros(vocab_size, device=logits.device)
+                breakers = getattr(sp, "dry_sequence_breaker_ids", set())
+                dry_base = getattr(sp, "dry_base", 1.75)
+                dry_allowed = getattr(sp, "dry_allowed_length", 2)
+                seq_len = len(tokens)
+
+                for suffix_len in range(1, min(seq_len, 50)):
+                    suffix = tokens[-suffix_len:]
+                    for start in range(seq_len - suffix_len - 1, -1, -1):
+                        match = True
+                        for j in range(suffix_len):
+                            tok = tokens[start + j]
+                            if tok != suffix[j] or tok in breakers:
+                                match = False
+                                break
+                        if match and suffix_len > dry_allowed:
+                            next_pos = start + suffix_len
+                            if next_pos < seq_len:
+                                penalty = dry_mult * (
+                                    dry_base ** (suffix_len - dry_allowed)
+                                )
+                                penalties[tokens[next_pos]] = max(
+                                    penalties[tokens[next_pos]], penalty
+                                )
+                            break
+                logits[i] -= penalties
+
+        # XTC — exclude top choices to force diversity
+        xtc_thresh = getattr(sp, "xtc_threshold", 0.0)
+        xtc_prob = getattr(sp, "xtc_probability", 0.0)
+        if xtc_thresh > 0 and xtc_prob > 0:
+            if random.random() <= xtc_prob:
+                probs = torch.softmax(logits[i], dim=-1)
+                above = probs >= xtc_thresh
+                if above.sum() >= 2:
+                    qualifying = probs.clone()
+                    qualifying[~above] = float("inf")
+                    min_idx = qualifying.argmin()
+                    remove = above.clone()
+                    remove[min_idx] = False
+                    logits[i, remove] = float("-inf")

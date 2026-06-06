@@ -64,6 +64,14 @@ class SamplingParams:
         stream_interval: Optional[int] = None,
         logit_bias: Optional[Dict[str, float]] = None,
         sampling_seed: Optional[int] = None,
+        # DRY (Don't Repeat Yourself) sampler
+        dry_multiplier: float = 0.0,
+        dry_base: float = 1.75,
+        dry_allowed_length: int = 2,
+        dry_sequence_breaker_ids: Optional[List[int]] = None,
+        # XTC (eXclude Top Choices) sampler
+        xtc_threshold: float = 0.0,
+        xtc_probability: float = 0.0,
     ) -> None:
         # For non-optional params, treat None as "use default" so that callers
         # (e.g. /generate) can pass null without crashing verify().
@@ -108,6 +116,14 @@ class SamplingParams:
         self.stream_interval = stream_interval
         self.logit_bias = logit_bias
         self.sampling_seed = sampling_seed
+
+        # DRY / XTC samplers
+        self.dry_multiplier = dry_multiplier if dry_multiplier is not None else 0.0
+        self.dry_base = dry_base if dry_base is not None else 1.75
+        self.dry_allowed_length = dry_allowed_length if dry_allowed_length is not None else 2
+        self.dry_sequence_breaker_ids = set(dry_sequence_breaker_ids or [])
+        self.xtc_threshold = xtc_threshold if xtc_threshold is not None else 0.0
+        self.xtc_probability = xtc_probability if xtc_probability is not None else 0.0
 
         # Process some special cases
         if 0 <= self.temperature < _SAMPLING_EPS:
