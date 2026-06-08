@@ -160,6 +160,13 @@ class OpenAIServingCompletion(OpenAIServingBase):
             "logit_bias": request.logit_bias,
             "custom_params": request.custom_params,
             "sampling_seed": request.seed,
+            # DRY / XTC sampler parameters
+            "dry_multiplier": request.dry_multiplier,
+            "dry_base": request.dry_base,
+            "dry_allowed_length": request.dry_allowed_length,
+            "dry_sequence_breaker_ids": request.dry_sequence_breaker_ids,
+            "xtc_threshold": request.xtc_threshold,
+            "xtc_probability": request.xtc_probability,
         }
 
         # Handle response_format constraints

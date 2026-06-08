@@ -346,6 +346,13 @@ class CompletionRequest(BaseModel):
     response_format: Optional[Union[ResponseFormat, StructuralTagResponseFormat]] = None
     custom_params: Optional[Dict] = None
     custom_logit_processor: Optional[str] = None
+    # DRY / XTC sampler parameters
+    dry_multiplier: float = 0.0
+    dry_base: float = 1.75
+    dry_allowed_length: int = 2
+    dry_sequence_breaker_ids: Optional[List[int]] = None
+    xtc_threshold: float = 0.0
+    xtc_probability: float = 0.0
 
     # For PD disaggregation
     bootstrap_host: Optional[Union[List[str], str]] = None
@@ -725,6 +732,13 @@ class ChatCompletionRequest(BaseModel):
     # Custom logit processor for advanced sampling control
     custom_logit_processor: Optional[Union[List[Optional[str]], str]] = None
     custom_params: Optional[Dict] = None
+    # DRY / XTC sampler parameters
+    dry_multiplier: float = 0.0
+    dry_base: float = 1.75
+    dry_allowed_length: int = 2
+    dry_sequence_breaker_ids: Optional[List[int]] = None
+    xtc_threshold: float = 0.0
+    xtc_probability: float = 0.0
 
     # Pre-computed prompt token IDs: when provided, bypasses chat template
     # tokenization entirely.  Messages are still used to derive stop tokens
@@ -898,6 +912,13 @@ class ChatCompletionRequest(BaseModel):
             "custom_params": self.custom_params,
             "sampling_seed": self.seed,
             "spaces_between_special_tokens": spaces_between_special_tokens,
+            # DRY / XTC sampler parameters
+            "dry_multiplier": self.dry_multiplier,
+            "dry_base": self.dry_base,
+            "dry_allowed_length": self.dry_allowed_length,
+            "dry_sequence_breaker_ids": self.dry_sequence_breaker_ids,
+            "xtc_threshold": self.xtc_threshold,
+            "xtc_probability": self.xtc_probability,
         }
 
         if self.response_format and self.response_format.type == "json_schema":
