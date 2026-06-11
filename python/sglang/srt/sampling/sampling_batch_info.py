@@ -72,6 +72,11 @@ class SamplingBatchInfo:
     # Handle logit bias
     logit_bias: Optional[torch.Tensor] = None
 
+    # Per-request Req references aligned with the batch rows, kept in sync
+    # through filter_batch/merge_batch. Used by samplers that need raw token
+    # history (DRY/XTC in layers/sampler.py).
+    reqs: Optional[List[Any]] = None
+
     @classmethod
     def from_schedule_batch(cls, batch: ScheduleBatch, vocab_size: int):
         global_server_args = get_global_server_args()
@@ -186,6 +191,7 @@ class SamplingBatchInfo:
             custom_logit_processor=merged_custom_logit_processor,
             device=device,
             logit_bias=logit_bias,
+            reqs=list(reqs),
         )
         ret.adjusted_from_schedule_batch(batch, vocab_size)
         return ret
@@ -289,6 +295,9 @@ class SamplingBatchInfo:
 
         if self.logit_bias is not None:
             self.logit_bias = self.logit_bias[keep_indices_device]
+
+        if self.reqs is not None:
+            self.reqs = [self.reqs[i] for i in keep_indices]
 
         self.adjusted_filter_batch(keep_indices, keep_indices_device)
 
@@ -400,6 +409,13 @@ class SamplingBatchInfo:
         self.need_top_p_sampling |= other.need_top_p_sampling
         self.need_top_k_sampling |= other.need_top_k_sampling
         self.need_min_p_sampling |= other.need_min_p_sampling
+
+        # Row alignment matters more than coverage: if either side is
+        # missing reqs, disable rather than risk a misaligned merge.
+        if self.reqs is not None and other.reqs is not None:
+            self.reqs = self.reqs + other.reqs
+        else:
+            self.reqs = None
 
         self.adjusted_merge_batch(other)
 

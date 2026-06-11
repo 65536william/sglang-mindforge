@@ -13,6 +13,7 @@ from sglang.srt.layers.dp_attention import (
 from sglang.srt.layers.logits_processor import LogitsProcessorOutput
 from sglang.srt.layers.utils.hash import murmur_hash32
 from sglang.srt.layers.utils.logprob import get_token_ids_logprobs, get_top_logprobs
+from sglang.srt.sampling.dry_utils import dry_candidate_penalties
 from sglang.srt.sampling.sampling_batch_info import SamplingBatchInfo
 from sglang.srt.sampling.sampling_params import TOP_K_ALL
 from sglang.srt.server_args import get_global_server_args
@@ -785,48 +786,39 @@ def _apply_dry_xtc(
     """
     import random
 
-    if not hasattr(sampling_info, "reqs") or not sampling_info.reqs:
+    reqs = getattr(sampling_info, "reqs", None)
+    if not reqs:
         return
 
-    for i, req in enumerate(sampling_info.reqs):
+    for i, req in enumerate(reqs):
         if i >= logits.shape[0]:
             break
         sp = req.sampling_params
 
-        # DRY — scan context for repeated sequences
+        # DRY — penalize tokens that would extend a repeated sequence
         dry_mult = getattr(sp, "dry_multiplier", 0.0)
         if dry_mult > 0:
-            tokens = list(getattr(req, "origin_input_ids", [])) + list(
-                getattr(req, "output_ids", [])
+            tokens = list(getattr(req, "origin_input_ids", None) or []) + list(
+                getattr(req, "output_ids", None) or []
             )
-            if len(tokens) >= 2:
+            penalties = dry_candidate_penalties(
+                tokens,
+                dry_mult,
+                getattr(sp, "dry_base", 1.75),
+                getattr(sp, "dry_allowed_length", 2),
+                getattr(sp, "dry_sequence_breaker_ids", None),
+            )
+            if penalties:
                 vocab_size = logits.shape[-1]
-                penalties = torch.zeros(vocab_size, device=logits.device)
-                breakers = getattr(sp, "dry_sequence_breaker_ids", set())
-                dry_base = getattr(sp, "dry_base", 1.75)
-                dry_allowed = getattr(sp, "dry_allowed_length", 2)
-                seq_len = len(tokens)
-
-                for suffix_len in range(1, min(seq_len, 50)):
-                    suffix = tokens[-suffix_len:]
-                    for start in range(seq_len - suffix_len - 1, -1, -1):
-                        match = True
-                        for j in range(suffix_len):
-                            tok = tokens[start + j]
-                            if tok != suffix[j] or tok in breakers:
-                                match = False
-                                break
-                        if match and suffix_len > dry_allowed:
-                            next_pos = start + suffix_len
-                            if next_pos < seq_len:
-                                penalty = dry_mult * (
-                                    dry_base ** (suffix_len - dry_allowed)
-                                )
-                                penalties[tokens[next_pos]] = max(
-                                    penalties[tokens[next_pos]], penalty
-                                )
-                            break
-                logits[i] -= penalties
+                ids = [t for t in penalties if 0 <= t < vocab_size]
+                if ids:
+                    idx = torch.tensor(ids, device=logits.device, dtype=torch.long)
+                    vals = torch.tensor(
+                        [penalties[t] for t in ids],
+                        device=logits.device,
+                        dtype=logits.dtype,
+                    )
+                    logits[i].scatter_(0, idx, logits[i][idx] - vals)
 
         # XTC — exclude top choices to force diversity
         xtc_thresh = getattr(sp, "xtc_threshold", 0.0)
