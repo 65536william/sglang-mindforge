@@ -49,11 +49,14 @@ def dry_candidate_penalties(
     n = len(tokens)
     if n < 2 or multiplier <= 0:
         return {}
-    if breaker_ids:
-        # Replace each breaker occurrence with a unique sentinel so no
-        # match can include (and therefore cross) a breaker.
+    # Negative ids (e.g. unresolved future-token placeholders from the
+    # overlap scheduler) and breakers become unique sentinels, so no match
+    # can include or cross them and positions stay aligned.
+    if breaker_ids or any(t < 0 for t in tokens):
+        breaker_ids = breaker_ids or set()
         tokens = [
-            -(idx + 1) if t in breaker_ids else t for idx, t in enumerate(tokens)
+            -(idx + 1) if (t < 0 or t in breaker_ids) else t
+            for idx, t in enumerate(tokens)
         ]
     z = _z_array(tokens[::-1])
     penalties: Dict[int, float] = {}

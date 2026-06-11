@@ -795,7 +795,12 @@ def _apply_dry_xtc(
             break
         sp = req.sampling_params
 
-        # DRY — penalize tokens that would extend a repeated sequence
+        # DRY — penalize tokens that would extend a repeated sequence.
+        # NOTE: under the overlap scheduler req.output_ids lags one step at
+        # sample time, so penalties target the previous candidate and DRY is
+        # effectively inert. Run with --disable-overlap-schedule for exact
+        # behavior (the stock penalizers solve this with cumulate-at-prepare;
+        # DRY needs the full history, so it can't use that mechanism).
         dry_mult = getattr(sp, "dry_multiplier", 0.0)
         if dry_mult > 0:
             tokens = list(getattr(req, "origin_input_ids", None) or []) + list(
